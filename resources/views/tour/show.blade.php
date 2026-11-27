@@ -141,6 +141,15 @@
             Memuat detail resolusi penuh 360°...
         </div>
 
+        {{-- iOS Direct-Link Gyro Permission Prompt (only shown if opened straight from QR without tapping Denah) --}}
+        <button type="button"
+                x-show="gyroNeedsTap && !gyroEnabled"
+                x-cloak
+                @click="toggleGyro(true)"
+                class="pointer-events-auto absolute top-28 left-1/2 -translate-x-1/2 z-30 rounded-full bg-emerald-500/95 px-4 py-1.5 text-xs font-bold text-slate-950 shadow-xl ring-2 ring-white/40 cursor-pointer animate-pulse">
+            ◎ Ketuk untuk Aktifkan Giroskop
+        </button>
+
         {{-- VR Mode Exit Bar (visible only in Stereoscopic Split-Screen VR) --}}
         <div x-show="vrMode" x-cloak class="absolute top-3 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2">
             <button type="button" @click="toggleVrMode()"
@@ -309,6 +318,8 @@
                 miniMapExpanded: false,
                 infoOpen: false,
                 gyroEnabled: false,
+                gyroNeedsTap: false,
+                gyroPrefEnabled: true,
                 vrMode: false,
                 musicPlaying: false,
                 viewYaw: 0,
@@ -361,11 +372,64 @@
                     this.ovPanY = e.clientY - this.ovStartY;
                 },
 
+                isTouchMobileDevice() {
+                    return /Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(navigator.userAgent)
+                        || (navigator.maxTouchPoints > 0 && window.matchMedia?.('(pointer: coarse)')?.matches);
+                },
+
+                async requestMobileGyroPermissionSync() {
+                    // MUST be invoked synchronously inside a tap/click handler for iOS Safari/Chrome!
+                    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                        try {
+                            const state = await DeviceOrientationEvent.requestPermission();
+                            return state === 'granted';
+                        } catch {
+                            return false;
+                        }
+                    }
+                    return true;
+                },
+
+                async tryAutoEnableGyro(permissionPromise = null) {
+                    if (!this.viewer || !this.gyroPrefEnabled || !this.isTouchMobileDevice()) return;
+                    if (!window.isSecureContext || typeof DeviceOrientationEvent === 'undefined') return;
+
+                    if (permissionPromise) {
+                        const granted = await permissionPromise;
+                        if (!granted) {
+                            this.gyroNeedsTap = true;
+                            return;
+                        }
+                    } else if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                        // Opened via direct link (?pin=...) on iOS without a prior tap — activate on first touch
+                        this.gyroNeedsTap = true;
+                        const onFirstTap = () => {
+                            if (!this.gyroPrefEnabled || this.gyroEnabled) return;
+                            this.toggleGyro(true);
+                        };
+                        window.addEventListener('pointerdown', onFirstTap, { once: true, capture: true });
+                        return;
+                    }
+
+                    try {
+                        this.gyroEnabled = await this.viewer.setGyroscope(true);
+                        this.gyroNeedsTap = false;
+                    } catch {
+                        this.gyroEnabled = false;
+                    }
+                },
+
                 enterVrForPin(pinId) {
                     const pin = this.payload.pins.find(p => p.id === Number(pinId)) || this.payload.pins[0];
                     if (!pin) return;
+
+                    // Capture iOS motion sensor permission SYNCHRONOUSLY while click gesture is active!
+                    const permPromise = (this.gyroPrefEnabled && this.isTouchMobileDevice())
+                        ? this.requestMobileGyroPermissionSync()
+                        : null;
+
                     this.mode = 'vr';
-                    this.$nextTick(() => this.selectPin(pin.id, { transition: false }));
+                    this.$nextTick(() => this.selectPin(pin.id, { transition: false, gyroPermissionPromise: permPromise }));
                 },
 
                 exitToOverview() {
@@ -391,6 +455,7 @@
                         preserveView: false,
                         transition,
                         fromLink: options.fromLink || null,
+                        gyroPermissionPromise: options.gyroPermissionPromise || null,
                     });
                 },
 
@@ -488,10 +553,7 @@
                             onLoadState: ({ loadingFull }) => { this.loadingFull = loadingFull; },
                         });
 
-                        const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-                        if (isMobile && 'DeviceOrientationEvent' in window && typeof DeviceOrientationEvent.requestPermission !== 'function') {
-                            this.viewer.setGyroscope(true).then((ok) => { this.gyroEnabled = ok; }).catch(() => {});
-                        }
+                        this.tryAutoEnableGyro(options.gyroPermissionPromise || null);
                     }
 
                     const photos = pin[this.phase] || [];
@@ -516,11 +578,18 @@
                     setTimeout(() => this.preloadNeighbors(activeLinks), 120);
                 },
 
-                async toggleGyro() {
+                async toggleGyro(forceState = null) {
                     if (!this.viewer) return;
+                    const desired = forceState !== null ? Boolean(forceState) : !this.gyroEnabled;
+                    this.gyroPrefEnabled = desired;
                     try {
-                        this.gyroEnabled = await this.viewer.setGyroscope(!this.gyroEnabled);
+                        if (desired && !window.isSecureContext) {
+                            throw new Error('Sensor giroskop membutuhkan akses HTTPS (https://360.galipatsistem.com).');
+                        }
+                        this.gyroEnabled = await this.viewer.setGyroscope(desired);
+                        this.gyroNeedsTap = false;
                     } catch (err) {
+                        this.gyroEnabled = false;
                         alert(err.message);
                     }
                 },

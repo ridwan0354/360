@@ -209,6 +209,8 @@ export class Panorama360Viewer {
 
         this._onDeviceOrientation = (e) => {
             if (!this.gyroEnabled || e.alpha === null || e.beta === null) return;
+            if (e.type === 'deviceorientationabsolute' && this._hasRelGyro) return;
+            if (e.type === 'deviceorientation') this._hasRelGyro = true;
             const screenAngle = window.screen?.orientation?.angle ?? window.orientation ?? 0;
             euler.set(
                 THREE.MathUtils.degToRad(e.beta),
@@ -249,6 +251,7 @@ export class Panorama360Viewer {
         el.addEventListener('touchend', this._onTouchEnd);
         window.addEventListener('resize', this._onResize);
         window.addEventListener('deviceorientation', this._onDeviceOrientation);
+        window.addEventListener('deviceorientationabsolute', this._onDeviceOrientation);
     }
 
     _touchDistance(t1, t2) {
@@ -838,6 +841,7 @@ export class Panorama360Viewer {
         window.removeEventListener('pointerup', this._onPointerUp);
         window.removeEventListener('resize', this._onResize);
         window.removeEventListener('deviceorientation', this._onDeviceOrientation);
+        window.removeEventListener('deviceorientationabsolute', this._onDeviceOrientation);
 
         for (const tex of this.textureCache.values()) {
             tex.dispose();
