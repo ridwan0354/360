@@ -34,22 +34,25 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 
+apt_update_safe() {
+  apt-get update -y --allow-releaseinfo-change || apt-get update -y || true
+}
+
 # ------------------------------------------------------------------------------
 # 1. Dependensi sistem dasar (tanpa mengganggu layanan aktif lain)
 # ------------------------------------------------------------------------------
 log "Memeriksa paket dasar sistem (git, curl, python3-venv, nginx, unzip)..."
-NEED_APT_UPDATE=0
-for cmd in git curl unzip; do
-  command -v "$cmd" >/dev/null 2>&1 || NEED_APT_UPDATE=1
-done
-dpkg -s python3-venv >/dev/null 2>&1 || NEED_APT_UPDATE=1
-dpkg -s nginx >/dev/null 2>&1 || NEED_APT_UPDATE=1
-dpkg -s libglib2.0-0 >/dev/null 2>&1 || NEED_APT_UPDATE=1
+MISSING_BASE_PKGS=()
+command -v git >/dev/null 2>&1 || MISSING_BASE_PKGS+=(git)
+command -v curl >/dev/null 2>&1 || MISSING_BASE_PKGS+=(curl)
+command -v unzip >/dev/null 2>&1 || MISSING_BASE_PKGS+=(unzip ca-certificates gnupg)
+dpkg -s python3-venv >/dev/null 2>&1 || MISSING_BASE_PKGS+=(python3 python3-venv python3-pip)
+dpkg -s nginx >/dev/null 2>&1 || MISSING_BASE_PKGS+=(nginx)
+dpkg -s libglib2.0-0 >/dev/null 2>&1 || MISSING_BASE_PKGS+=(libglib2.0-0)
 
-if [[ "$NEED_APT_UPDATE" -eq 1 ]]; then
-  apt-get update -y
-  apt-get install -y git curl unzip ca-certificates gnupg software-properties-common \
-    python3 python3-venv python3-pip libglib2.0-0 nginx
+if [[ "${#MISSING_BASE_PKGS[@]}" -gt 0 ]]; then
+  apt_update_safe
+  apt-get install -y "${MISSING_BASE_PKGS[@]}"
 fi
 
 # ------------------------------------------------------------------------------
@@ -65,8 +68,10 @@ done
 
 if [[ -z "$PHP_VER" ]]; then
   log "PHP >= 8.3 belum ditemukan. Menambahkan PHP 8.4 (FPM + ekstensi Laravel/Imagick)..."
+  apt_update_safe
+  apt-get install -y software-properties-common || true
   add-apt-repository -y ppa:ondrej/php || true
-  apt-get update -y
+  apt_update_safe
   PHP_VER="8.4"
 fi
 
@@ -82,7 +87,6 @@ REQ_PKGS=(
   "php${PHP_VER}-curl"
   "php${PHP_VER}-zip"
   "php${PHP_VER}-gd"
-  "php${PHP_VER}-imagick"
   "php${PHP_VER}-bcmath"
   "php${PHP_VER}-intl"
 )
@@ -95,8 +99,13 @@ for pkg in "${REQ_PKGS[@]}"; do
 done
 
 if [[ "${#MISSING_PHP_PKGS[@]}" -gt 0 ]]; then
-  apt-get update -y
+  apt_update_safe
   apt-get install -y "${MISSING_PHP_PKGS[@]}"
+fi
+
+# Imagick opsional (sangat disarankan, aman dilewati jika repo PHP lama tidak menyediakannya)
+if ! dpkg -s "php${PHP_VER}-imagick" >/dev/null 2>&1; then
+  apt-get install -y "php${PHP_VER}-imagick" || true
 fi
 
 PHP_BIN="$(command -v "php${PHP_VER}")"
@@ -105,7 +114,7 @@ PHP_FPM_POOL_DIR="/etc/php/${PHP_VER}/fpm/pool.d"
 PHP_FPM_SOCK="/run/php/php${PHP_VER}-fpm-ruang360.sock"
 
 # ------------------------------------------------------------------------------
-# 3. Composer & Node.js >= 20
+# 3. Composer & Pemeriksaan Node (tanpa menimpa Node proyek lain jika prebuilt siap)
 # ------------------------------------------------------------------------------
 if ! command -v composer >/dev/null 2>&1; then
   log "Menginstal Composer secara global..."
@@ -118,16 +127,6 @@ if ! command -v composer >/dev/null 2>&1; then
   fi
   "$PHP_BIN" /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer
   rm -f /tmp/composer-setup.php
-fi
-
-NODE_MAJOR=0
-if command -v node >/dev/null 2>&1; then
-  NODE_MAJOR="$(node -v | sed -E 's/^v([0-9]+).*/\1/' || echo 0)"
-fi
-if [[ "$NODE_MAJOR" -lt 20 ]]; then
-  log "Menginstal Node.js 22 LTS (Node aktif saat ini: v${NODE_MAJOR})..."
-  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-  apt-get install -y nodejs
 fi
 
 # ------------------------------------------------------------------------------
@@ -160,13 +159,34 @@ fi
 "${APP_DIR}/.venv_stitcher/bin/python" -c "import cv2, numpy; print('OpenCV ready:', cv2.__version__, 'NumPy:', numpy.__version__)"
 
 # ------------------------------------------------------------------------------
-# 6. Install Dependensi Laravel & Build Aset Vite
+# 6. Install Dependensi Laravel & Aset Vite
 # ------------------------------------------------------------------------------
-log "Menginstal dependensi PHP (Composer) dan build aset frontend (Vite)..."
+log "Menginstal dependensi PHP (Composer)..."
 COMPOSER_ALLOW_SUPERUSER=1 "$PHP_BIN" "$(command -v composer)" install --no-dev --optimize-autoloader --no-interaction
 
-npm ci --no-audit --no-fund
-npm run build
+CAN_BUILD_VITE=0
+if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
+  NODE_VER_CLEAN="$(node -v | sed -E 's/^v//')"
+  NODE_MAJ="${NODE_VER_CLEAN%%.*}"
+  NODE_MIN="$(echo "$NODE_VER_CLEAN" | cut -d. -f2)"
+  if [[ "$NODE_MAJ" -gt 22 ]] || [[ "$NODE_MAJ" -eq 22 && "$NODE_MIN" -ge 12 ]] || [[ "$NODE_MAJ" -eq 20 && "$NODE_MIN" -ge 19 ]]; then
+    CAN_BUILD_VITE=1
+  fi
+fi
+
+if [[ "$CAN_BUILD_VITE" -eq 1 ]]; then
+  log "Node v${NODE_VER_CLEAN} mendukung Vite 8 — membangun aset frontend (npm ci && npm run build)..."
+  npm ci --no-audit --no-fund
+  npm run build
+elif [[ -f "${APP_DIR}/public/build/manifest.json" ]]; then
+  log "Menggunakan aset Vite pre-compiled dari repository (Node VPS tetap aman tidak diubah)."
+else
+  log "Node >=20.19 / >=22.12 belum tersedia dan aset build belum ada — memasang Node 22 LTS..."
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  apt-get install -y nodejs
+  npm ci --no-audit --no-fund
+  npm run build
+fi
 
 # ------------------------------------------------------------------------------
 # 7. Konfigurasi .env, Database SQLite & Seeding Awal (Aman untuk Update)
