@@ -179,7 +179,6 @@ if [[ ! -f "${APP_DIR}/.env" ]]; then
   sed -i -E "s|^APP_ENV=.*|APP_ENV=production|" "${APP_DIR}/.env"
   sed -i -E "s|^APP_DEBUG=.*|APP_DEBUG=false|" "${APP_DIR}/.env"
   sed -i -E "s|^APP_URL=.*|APP_URL=https://${DOMAIN}|" "${APP_DIR}/.env"
-  echo "SESSION_SECURE_COOKIE=true" >> "${APP_DIR}/.env"
 fi
 
 if grep -qE '^APP_KEY=$' "${APP_DIR}/.env"; then
@@ -195,7 +194,7 @@ fi
 log "Menjalankan migrasi database..."
 "$PHP_BIN" artisan migrate --force
 
-USER_COUNT="$("$PHP_BIN" artisan tinker --execute="echo \App\Models\User::count();" 2>/dev/null | tr -dc '0-9' || echo 0)"
+USER_COUNT="$("$PHP_BIN" -r 'require "vendor/autoload.php"; $app = require "bootstrap/app.php"; $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap(); echo \App\Models\User::count();' 2>/dev/null || echo 0)"
 if [[ "$IS_FRESH_DB" -eq 1 || "${USER_COUNT:-0}" -eq 0 ]]; then
   log "Database masih kosong — mengisi data demo & akun awal (Admin & Kru)..."
   "$PHP_BIN" artisan db:seed --force
