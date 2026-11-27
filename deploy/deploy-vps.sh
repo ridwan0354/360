@@ -137,6 +137,7 @@ if [[ -d "${APP_DIR}/.git" ]]; then
   log "Repository sudah ada di ${APP_DIR}. Melakukan git pull..."
   git config --global --add safe.directory "${APP_DIR}" || true
   cd "${APP_DIR}"
+  git checkout -- public/build 2>/dev/null || true
   git pull --ff-only origin main
 else
   if [[ -d "${APP_DIR}" && -n "$(ls -A "${APP_DIR}" 2>/dev/null || true)" ]]; then

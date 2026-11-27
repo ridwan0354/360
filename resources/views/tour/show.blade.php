@@ -179,16 +179,16 @@
 
                 {{-- Top-Right: Interactive Mini-Map with Live FOV Cone --}}
                 <div x-show="payload.floorplan && payload.floorplan.image_url"
-                     class="pointer-events-auto glass-hud rounded-2xl overflow-hidden shadow-2xl transition-all duration-200"
-                     :class="miniMapExpanded ? 'w-72 sm:w-[420px]' : 'w-36 sm:w-52'">
+                     class="pointer-events-auto glass-hud rounded-2xl overflow-hidden shadow-2xl transition-all duration-200 shrink-0"
+                     :class="miniMapExpanded ? 'fixed top-16 left-3 right-3 sm:static sm:w-[420px] z-40 ring-1 ring-amber-400/50' : 'w-32 sm:w-52'">
                     <div class="flex items-center justify-between px-2.5 py-1.5 border-b border-white/10 text-[11px]">
                         <span class="font-bold text-amber-300">Denah Mini</span>
                         <button type="button" @click="miniMapExpanded = !miniMapExpanded"
-                                class="rounded px-1.5 py-0.5 bg-white/10 text-white hover:bg-white/20 cursor-pointer"
+                                class="rounded px-2 py-0.5 bg-white/15 text-white font-semibold hover:bg-white/25 cursor-pointer"
                                 x-text="miniMapExpanded ? 'Kecilkan' : 'Perbesar'"></button>
                     </div>
 
-                    <div class="relative bg-white overflow-hidden">
+                    <div class="relative bg-white overflow-hidden" :class="miniMapExpanded ? 'max-h-[62vh] flex items-center justify-center' : ''">
                         <img :src="payload.floorplan?.image_url" alt="Mini Map" class="w-full h-auto block select-none pointer-events-none">
 
                         {{-- Rotating Field of View Radar Cone around Active Pin --}}
@@ -208,7 +208,7 @@
                                     :style="`left: ${pin.pos_x}%; top: ${pin.pos_y}%;`"
                                     :class="[
                                         currentPin && currentPin.id === pin.id ? 'bg-amber-500 text-slate-950 scale-125 ring-2 ring-slate-950 z-20' : 'bg-slate-900/85 text-white ring-1 ring-white z-10 hover:scale-110',
-                                        miniMapExpanded ? 'h-5 w-5 text-[10px]' : 'h-4 w-4 text-[9px]'
+                                        miniMapExpanded ? 'h-6 w-6 text-[11px]' : 'h-4 w-4 text-[9px]'
                                     ]"
                                     class="absolute -translate-x-1/2 -translate-y-1/2 flex items-center justify-center rounded-full font-bold shadow transition cursor-pointer"
                                     :title="`#${pin.pin_number} ${pin.title}`">
